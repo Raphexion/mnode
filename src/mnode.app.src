@@ -5,7 +5,8 @@
   {mod, { mnode_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    sasl
    ]},
   {env,[]},
   {modules, []},
