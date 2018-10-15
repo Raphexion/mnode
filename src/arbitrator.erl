@@ -25,22 +25,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-interface_name_and_ip("lo", _Ip) ->
-    ok;
-interface_name_and_ip("docker" ++ _Rest, _Ip) ->
-    ok;
-
-interface_name_and_ip("br-" ++ _Rest, _Ip) ->
-    ok;
-
 interface_name_and_ip(Name, Ip) ->
-    %% will only accept interfaces that can reach the outside
-    case gen_tcp:connect(?EXTERNAL_TEST_HOST, ?EXTERNAL_TEST_PORT, [{ip, Ip}]) of
-	{ok, _S} ->
-	    gen_server:call(?MODULE, {interface, Name, Ip});
-	_ ->
-	    {ok, skipped}
-    end.
+    gen_server:cast(?MODULE, {interface, Name, Ip}).
 
 found_target_domain(Ip, OurInterfaceAddr) ->
     gen_server:cast(?MODULE, {found_target_domain, Ip, OurInterfaceAddr}).
@@ -53,14 +39,14 @@ found_wrong_domain(Ip, OurInterfaceAddr) ->
 %%====================================================================
 
 init(_) ->
-    {ok, #{interfaces => #{}}}.
-
-handle_call({interface, Name, Ip}, _From, State=#{interfaces := Interfaces}) ->
-    io:fwrite("Name interface ~p ~p~n", [Name, Ip]),
-    {reply, ok, State#{interfaces := Interfaces#{Name => Ip}}};
+    {ok, #{banned => #{}}}.
 
 handle_call(What, _From, State) ->
     {reply, {ok, What, State}, State}.
+
+handle_cast({interface, Name, Ip}, State0) ->
+    State = interface_logic_high(Name, Ip, State0),
+    {noreply, State};
 
 handle_cast({found_target_domain, Ip, OurInterfaceAddr}, State0) ->
     State = handle_target_domain(Ip, OurInterfaceAddr, State0),
@@ -69,9 +55,8 @@ handle_cast({found_target_domain, Ip, OurInterfaceAddr}, State0) ->
 handle_cast(_What, State) ->
     {noreply, State}.
 
-handle_info(timeout, State=#{ip := Ip, our := Our}) ->
-    io:fwrite("JUDGE: ~p ~p~n", [Our, Ip]),
-    set_name(Our),
+handle_info(timeout, State) ->
+    judge(State),
     {noreply, State};
 
 handle_info(_What, State) ->
@@ -90,8 +75,14 @@ code_change(_, _, State) ->
 handle_target_domain(_Ip, {127,0,0,1}, State) ->
     State;
 
-handle_target_domain(Ip, OurInterfaceAddr, _State) ->
-    #{ip => Ip, our => OurInterfaceAddr}.
+handle_target_domain(Ip, Our, State=#{banned := Banned}) ->
+    target_domain_logic(Ip, Our, State, maps:find(Our, Banned)).
+
+target_domain_logic(Ip, Our, State, error) ->
+    State#{ip => Ip, our => Our};
+
+target_domain_logic(_Ip, _Our, State, {ok, true}) ->
+    State.
 
 set_name({A, B, C, D}) ->
     Node = list_to_atom(?NODE_NAME ++ "@" ++
@@ -100,3 +91,34 @@ set_name({A, B, C, D}) ->
 			    integer_to_list(C) ++ "." ++
 			    integer_to_list(D)),
     net_kernel:start([Node, longnames]).
+
+judge(#{high_prio := Ip, our := Ip}) ->
+    set_name(Ip);
+
+judge(#{low_prio := Ip, our := Ip}) ->
+    set_name(Ip);
+
+judge(State) ->
+    io:fwrite("unable to judge ~p~n", [State]).
+
+interface_logic_high("lo", Ip, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
+interface_logic_high("docker" ++ _Rest, Ip, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
+interface_logic_high("br-" ++ _Rest, Ip, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
+interface_logic_high(_Name, Ip={127,0,0,1}, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
+interface_logic_high(Name, Ip, State) ->
+    ExternalConnectRes = gen_tcp:connect(?EXTERNAL_TEST_HOST, ?EXTERNAL_TEST_PORT, [{ip, Ip}], 1000),
+    interface_logic(Name, Ip, ExternalConnectRes, State).
+
+interface_logic(_Name, Ip, {ok, _S}, State) ->
+    State#{high_prio => Ip};
+
+interface_logic(_Name, Ip, {error, timeout}, State) ->
+    State#{low_prio => Ip}.
