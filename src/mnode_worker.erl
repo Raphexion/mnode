@@ -38,7 +38,6 @@ handle_info({udp, _Socket, Ip, _Port, Packet}, State=#{addr := Addr}) ->
     {noreply, State};
 
 handle_info(What, State) ->
-    io:fwrite("INFO: ~p~p~n", [What, State]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

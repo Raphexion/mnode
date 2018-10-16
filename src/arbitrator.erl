@@ -1,10 +1,12 @@
 -module(arbitrator).
 -behaviour(gen_server).
+
 -define(SERVER, ?MODULE).
 -define(COOL_BEFORE_SET, 5000).
 -define(EXTERNAL_TEST_HOST, "www.google.com").
 -define(EXTERNAL_TEST_PORT, 80).
 -define(NODE_NAME, "master").
+-define(COOKIE, mysecretecookie).
 
 -export([start_link/0,
 	 interface_name_and_ip/2,
@@ -90,7 +92,8 @@ set_name({A, B, C, D}) ->
 			    integer_to_list(B) ++ "." ++
 			    integer_to_list(C) ++ "." ++
 			    integer_to_list(D)),
-    net_kernel:start([Node, longnames]).
+    net_kernel:start([Node, longnames]),
+    erlang:set_cookie(node(), ?COOKIE).
 
 judge(#{high_prio := Ip, our := Ip}) ->
     set_name(Ip);
@@ -99,7 +102,7 @@ judge(#{low_prio := Ip, our := Ip}) ->
     set_name(Ip);
 
 judge(State) ->
-    io:fwrite("unable to judge ~p~n", [State]).
+    io:fwrite("error: unable to judge ~p~n", [State]).
 
 interface_logic_high("lo", Ip, State=#{banned := Banned}) ->
     State#{banned => Banned#{Ip => true}};
