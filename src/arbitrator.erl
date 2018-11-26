@@ -48,7 +48,7 @@ handle_call(What, _From, State) ->
 
 handle_cast({interface, Name, Ip}, State0) ->
     State = interface_logic_high(Name, Ip, State0),
-    {noreply, State};
+    {noreply, State, ?COOL_BEFORE_SET};
 
 handle_cast({found_target_domain, Ip, OurInterfaceAddr}, State0) ->
     State = handle_target_domain(Ip, OurInterfaceAddr, State0),
@@ -58,6 +58,7 @@ handle_cast(_What, State) ->
     {noreply, State}.
 
 handle_info(timeout, State) ->
+    io:fwrite("time to judge~n"),
     judge(State),
     {noreply, State};
 
@@ -100,16 +101,21 @@ handle_target_domain(Ip, Our, State=#{banned := Banned}) ->
 %% then do nothing, else save both the ip and interface
 %%
 
-target_domain_logic(_Ip, _Our, State, {ok, true}) ->
+target_domain_logic(Ip, Our, State, {ok, true}) ->
+    io:fwrite("tdl 1: ~p ~p ~n", [Ip, Our]),
     State;
 
 target_domain_logic(Ip, Our, State, error) ->
+    io:fwrite("tdl 2: ~p ~p ~n", [Ip, Our]),
     State#{ip => Ip, our => Our}.
 
 judge(#{high_prio := Ip, our := Ip}) ->
     set_name(Ip);
 
 judge(#{low_prio := Ip, our := Ip}) ->
+    set_name(Ip);
+
+judge(#{high_prio := Ip}) ->
     set_name(Ip);
 
 judge(State) ->
@@ -127,18 +133,27 @@ interface_logic_high("docker" ++ _Rest, Ip, State=#{banned := Banned}) ->
 interface_logic_high("br-" ++ _Rest, Ip, State=#{banned := Banned}) ->
     State#{banned => Banned#{Ip => true}};
 
+interface_logic_high("virbr" ++ _Rest, Ip, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
+interface_logic_high("tun" ++ _Rest, Ip, State=#{banned := Banned}) ->
+    State#{banned => Banned#{Ip => true}};
+
 interface_logic_high(_Name, Ip={127,0,0,1}, State=#{banned := Banned}) ->
     State#{banned => Banned#{Ip => true}};
 
 interface_logic_high(Name, Ip, State) ->
+    io:fwrite("good candidate ~p~n", [Name]),
     ExternalConnectRes = gen_tcp:connect(?EXTERNAL_TEST_HOST, ?EXTERNAL_TEST_PORT, [{ip, Ip}], 1000),
     interface_logic(Name, Ip, ExternalConnectRes, State).
 
 %% Help logic to decided if the interface has high or low priority
 %%
 
-interface_logic(_Name, Ip, {ok, _S}, State) ->
+interface_logic(Name, Ip, {ok, _S}, State) ->
+    io:fwrite("good candidate ~p high~n", [Name]),
     State#{high_prio => Ip};
 
-interface_logic(_Name, Ip, {error, timeout}, State) ->
+interface_logic(Name, Ip, {error, timeout}, State) ->
+    io:fwrite("good candidate ~p high~n", [Name]),
     State#{low_prio => Ip}.
