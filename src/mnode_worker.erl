@@ -13,20 +13,42 @@
 	 terminate/2,
 	 code_change/3]).
 
+%%=============================================================================
+%% API
+%%=============================================================================
+
 start_link(Name, Addr) ->
     gen_server:start_link(?MODULE, {Name, Addr}, []).
+
+%%====================================================================
+%% Behaviour
+%%====================================================================
+
+%% It we start the worker with a IPv4 address,
+%% init and continue at handle_info(timeout).
+%% It not and IPv4 address, do nothing.
 
 init({Name, Addr={_A, _B, _C, _D}}) ->
     {ok, #{name => Name, addr => Addr, socket => missing}, 0};
 
-init({_Name, _Opts}) ->
-    {ok, #{}}.
+init({Name, _Opts}) ->
+    {ok, #{name => Name, addr => missing, socket => missing}}.
+
+%% This module does not support any calls
+%%
 
 handle_call(What, _From, State) ->
     {reply, {ok, What, State}, State}.
 
+%% This module does not support any casts
+%%
+
 handle_cast(_What, State) ->
     {noreply, State}.
+
+%% There are two important info patterns
+%%  A) timeout that is triggered from init above
+%%  B) udp packages
 
 handle_info(timeout, State=#{name := Name, addr := Addr}) ->
     arbitrator:interface_name_and_ip(Name, Addr),
@@ -37,13 +59,22 @@ handle_info({udp, _Socket, Ip, _Port, Packet}, State=#{addr := Addr}) ->
     handle_packet(Ip, Packet, Addr),
     {noreply, State};
 
-handle_info(What, State) ->
+handle_info(_What, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+%% Close socket if open when terminating
+%%
+
+terminate(_Reason, #{sock := missing}) ->
+    ok;
+terminate(_Reason, #{sock := Sock}) ->
+    gen_udp:close(Sock),
     ok.
 
-code_change(_, _, State) ->
+%% Classic code_change when nothing needs to
+%% to be done
+
+code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%====================================================================
@@ -82,9 +113,9 @@ handle_decoded_packet(Ip, OurInterfaceAddr, {ok, #dns_rec{header = _Header,
 handle_decoded_packet(_Ip, _OurInterfaceAddr, {ok, #dns_rec{header = _Header}}) ->
     ok.
 
-%%%
+%% Update arbirator about zero conf messages
 %%
-%%%
+
 handle_domain(Ip, OurInterfaceAddr, 0) ->
     arbitrator:found_wrong_domain(Ip, OurInterfaceAddr);
 

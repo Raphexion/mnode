@@ -74,17 +74,8 @@ code_change(_, _, State) ->
 %% Internal functions
 %%====================================================================
 
-handle_target_domain(_Ip, {127,0,0,1}, State) ->
-    State;
-
-handle_target_domain(Ip, Our, State=#{banned := Banned}) ->
-    target_domain_logic(Ip, Our, State, maps:find(Our, Banned)).
-
-target_domain_logic(Ip, Our, State, error) ->
-    State#{ip => Ip, our => Our};
-
-target_domain_logic(_Ip, _Our, State, {ok, true}) ->
-    State.
+%% Key function where we change our name and set the cookie
+%%
 
 set_name({A, B, C, D}) ->
     Node = list_to_atom(?NODE_NAME ++ "@" ++
@@ -95,6 +86,26 @@ set_name({A, B, C, D}) ->
     net_kernel:start([Node, longnames]),
     erlang:set_cookie(node(), ?COOKIE).
 
+%% handle target domain helps analyse what we should do
+%% in a particular situation
+%%
+
+handle_target_domain(_Ip, {127,0,0,1}, State) ->
+    State;
+
+handle_target_domain(Ip, Our, State=#{banned := Banned}) ->
+    target_domain_logic(Ip, Our, State, maps:find(Our, Banned)).
+
+%% If the interface is banned (i.e, in the map of banned above)
+%% then do nothing, else save both the ip and interface
+%%
+
+target_domain_logic(_Ip, _Our, State, {ok, true}) ->
+    State;
+
+target_domain_logic(Ip, Our, State, error) ->
+    State#{ip => Ip, our => Our}.
+
 judge(#{high_prio := Ip, our := Ip}) ->
     set_name(Ip);
 
@@ -103,6 +114,9 @@ judge(#{low_prio := Ip, our := Ip}) ->
 
 judge(State) ->
     io:fwrite("error: unable to judge ~p~n", [State]).
+
+%% Either ban the IP or try to connect to external device
+%%
 
 interface_logic_high("lo", Ip, State=#{banned := Banned}) ->
     State#{banned => Banned#{Ip => true}};
@@ -119,6 +133,9 @@ interface_logic_high(_Name, Ip={127,0,0,1}, State=#{banned := Banned}) ->
 interface_logic_high(Name, Ip, State) ->
     ExternalConnectRes = gen_tcp:connect(?EXTERNAL_TEST_HOST, ?EXTERNAL_TEST_PORT, [{ip, Ip}], 1000),
     interface_logic(Name, Ip, ExternalConnectRes, State).
+
+%% Help logic to decided if the interface has high or low priority
+%%
 
 interface_logic(_Name, Ip, {ok, _S}, State) ->
     State#{high_prio => Ip};
